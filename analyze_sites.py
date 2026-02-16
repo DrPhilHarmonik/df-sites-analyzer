@@ -8,7 +8,7 @@ Usage:
     python3 analyze_sites.py <file> --type fortress    # Filter by site type
 """
 
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from collections import defaultdict, Counter
 import re
 import sys
@@ -31,7 +31,7 @@ HF_FIELDS = {
 
 def clean_and_parse(filepath):
     print("Loading and cleaning XML...")
-    with open(filepath, 'r', encoding='utf-8') as f:
+    with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
         content = f.read()
     content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', content)
     print("Parsing XML tree...")
@@ -81,7 +81,7 @@ def main():
     for site in root.findall(".//sites/site"):
         sid = site.findtext("id", "")
         structures = []
-        for struct in site.findall(".//structure"):
+        for struct in site.findall("structures/structure"):
             structures.append({
                 "id": struct.findtext("local_id", ""),
                 "type": struct.findtext("type", ""),
@@ -130,7 +130,6 @@ def main():
     all_events = {}
     site_events = defaultdict(list)  # site_id -> [event_id, ...]
     site_event_types = defaultdict(Counter)
-    site_deaths = defaultdict(int)
     site_kills_by = defaultdict(Counter)  # site_id -> {slayer_hfid: count}
 
     for evt in root.findall(".//historical_events/historical_event"):
@@ -152,7 +151,6 @@ def main():
             site_events[sid].append(eid)
             site_event_types[sid][etype] += 1
             if etype == "hf died":
-                site_deaths[sid] += 1
                 slayer = ev_data.get("slayer_hfid", "")
                 if slayer and slayer != "-1":
                     site_kills_by[sid][slayer] += 1
@@ -229,7 +227,7 @@ def main():
             if filter_type and s["type"].lower() != filter_type:
                 continue
             evt_count = len(site_events.get(sid, []))
-            deaths = site_deaths.get(sid, 0)
+            deaths = site_event_types[sid]["hf died"]
             n_colls = len(site_collections.get(sid, []))
             n_structs = len(s["structures"])
             # Score: events + deaths bonus + collections + structures
@@ -317,7 +315,7 @@ def main():
 
     # Summary stats
     evts = site_events.get(target, [])
-    deaths = site_deaths.get(target, 0)
+    deaths = site_event_types[target]["hf died"]
     print(f"\n  STATISTICS:")
     print(f"    Total events: {len(evts)}")
     print(f"    Deaths at this site: {deaths}")
@@ -338,13 +336,10 @@ def main():
     figure_appearances = Counter()
     for eid in evts:
         ev = all_events.get(eid, {})
-        for k, v in ev.items():
-            if "hfid" in k.lower() and v and v != "-1":
-                try:
-                    int(v)
-                    figure_appearances[v] += 1
-                except ValueError:
-                    pass
+        for k in HF_FIELDS:
+            v = ev.get(k, "")
+            if v and v != "-1":
+                figure_appearances[v] += 1
     if figure_appearances:
         print(f"\n  MOST REFERENCED FIGURES ({len(figure_appearances)} total):")
         for hfid, count in figure_appearances.most_common(15):
