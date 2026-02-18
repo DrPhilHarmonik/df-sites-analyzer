@@ -22,6 +22,8 @@ except ImportError:
     import xml.etree.ElementTree as ET  # type: ignore[no-redef]
 
 _CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
+_SKIP_KEYS = frozenset(("id", "type", "year", "sec"))
+_SKIP_VALS = frozenset(("-1", "", "-1,-1"))
 
 DF_MONTHS = [
     "Granite", "Slate", "Felsite", "Hematite", "Malachite", "Galena",
@@ -86,11 +88,9 @@ def resolve_entity(eid, entities):
 
 def format_event_details(ev, sites, entities, hf_info, artifacts):
     """Return human-readable 'Key: Value' strings for displayable event fields."""
-    SKIP_KEYS = frozenset(("id", "type", "year", "sec"))
-    SKIP_VALS = frozenset(("-1", "", "-1,-1"))
     details = []
     for k, v in sorted(ev.items()):
-        if k in SKIP_KEYS or v in SKIP_VALS:
+        if k in _SKIP_KEYS or v in _SKIP_VALS:
             continue
         display = v
         if k == "site_id":
@@ -107,6 +107,24 @@ def format_event_details(ev, sites, entities, hf_info, artifacts):
             if a: display = a
         details.append(k.replace("_", " ").title() + ": " + display)
     return details
+
+
+def sort_events(event_ids, all_events):
+    """Return (year, sec, event_id, event_dict) tuples sorted chronologically."""
+    result = []
+    for eid in event_ids:
+        ev = all_events.get(eid, {})
+        try:
+            yr = int(ev.get("year", 0))
+        except ValueError:
+            yr = 0
+        try:
+            sc = int(ev.get("sec", -1))
+        except ValueError:
+            sc = -1
+        result.append((yr, sc, eid, ev))
+    result.sort()
+    return result
 
 
 def parse_args():
@@ -201,19 +219,7 @@ def build_site_detail_json(target, sites, site_events, site_event_types, site_ki
         for c in colls
     ]
 
-    events_sorted = []
-    for eid in evts:
-        ev = all_events.get(eid, {})
-        try:
-            yr = int(ev.get("year", 0))
-        except ValueError:
-            yr = 0
-        try:
-            sc = int(ev.get("sec", -1))
-        except ValueError:
-            sc = -1
-        events_sorted.append((yr, sc, eid, ev))
-    events_sorted.sort()
+    events_sorted = sort_events(evts, all_events)
 
     event_list = []
     for yr, sc, eid, ev in events_sorted:
@@ -337,8 +343,8 @@ def main():
 
     # ── Event Collections ────────────────────────────────────────────────────
     print("Extracting event collections...", file=sys.stderr)
-    collections = []
     site_collections = defaultdict(list)
+    n_collections = 0
     for coll in root.findall(".//historical_event_collections/historical_event_collection"):
         c = {}
         coll_events = []
@@ -350,11 +356,11 @@ def main():
             else:
                 c[child.tag] = child.text or ""
         c["_events"] = coll_events
-        collections.append(c)
+        n_collections += 1
         csid = c.get("site_id", "-1")
         if csid and csid != "-1":
             site_collections[csid].append(c)
-    print(f"  {len(collections)} collections", file=sys.stderr)
+    print(f"  {n_collections} collections", file=sys.stderr)
 
     root.clear()
 
@@ -525,19 +531,7 @@ def main():
     print(f"\n  FULL TIMELINE ({len(evts)} events):")
     print("-" * 80)
 
-    events_sorted = []
-    for eid in evts:
-        ev = all_events.get(eid, {})
-        try:
-            yr = int(ev.get("year", 0))
-        except ValueError:
-            yr = 0
-        try:
-            sc = int(ev.get("sec", -1))
-        except ValueError:
-            sc = -1
-        events_sorted.append((yr, sc, eid, ev))
-    events_sorted.sort()
+    events_sorted = sort_events(evts, all_events)
 
     for yr, sc, eid, ev in events_sorted:
         etype = ev.get("type", "?")
